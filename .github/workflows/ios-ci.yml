@@ -25,7 +25,7 @@ env:
 jobs:
   # ---------- 1. Cheap checks on Linux (1x minutes) ----------
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +35,7 @@ jobs:
         # || true — so it doesn't fail on third-party code; remove once .swiftlint.yml is configured
 
   secrets-scan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -123,7 +123,7 @@ jobs:
   # For production, add Required reviewers (yourself) — that is the manual approval.
   deploy-staging:
     needs: archive
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: staging
     steps:
       - uses: actions/download-artifact@v4
@@ -133,7 +133,7 @@ jobs:
 
   deploy-production:
     needs: deploy-staging
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: production
     steps:
       - run: echo "App Store Connect upload after approval goes here"
