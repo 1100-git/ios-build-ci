@@ -109,6 +109,13 @@ jobs:
           retention-days: 7
 
   # ---------- 3. Unsigned archive as a "release candidate" ----------
+  archive:
+    needs: build-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
       - name: Archive (unsigned)
         run: |
           set -o pipefail
@@ -133,8 +140,7 @@ jobs:
         with:
           name: app-archive
           path: build/SyncUps.xcarchive
-          retention-days: 2
-
+          retention-days: 7
   # ---------- 4. Staging / Production with manual approval ----------
   # Create in Settings → Environments: "staging" and "production".
   # For production, add Required reviewers (yourself) — that is the manual approval.
