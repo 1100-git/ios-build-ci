@@ -1,0 +1,139 @@
+# .github/workflows/ios-ci.yml
+# "staging" and "production" with manual approval via GitHub Environments.
+
+name: iOS CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancels the previous run on the same branch — saves macOS minutes
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Adjust for your project (check with: xcodebuild -list)
+  XCODE_CONTAINER: "-project Examples/SyncUps/SyncUps.xcodeproj"
+  SCHEME: "SyncUps"
+
+jobs:
+  # ---------- 1. Cheap checks on Linux (1x minutes) ----------
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: SwiftLint
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work ghcr.io/realm/swiftlint:latest swiftlint lint --reporter github-actions-logging || true
+        # || true — so it doesn't fail on third-party code; remove once .swiftlint.yml is configured
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------- 2. Build and test on macOS (10x minutes in private repos) ----------
+  build-test:
+    needs: [lint, secrets-scan]
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            .build/DerivedData/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Pick simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j \
+            | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; \
+              print(next(x['udid'] for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Build & test (simulator, unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            $XCODE_CONTAINER \
+            -scheme "$SCHEME" \
+            -only-testing:SyncUpsTests \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath .build/DerivedData \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify --renderer github-actions
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults.xcresult
+          retention-days: 7
+
+  # ---------- 3. Unsigned archive as a "release candidate" ----------
+  archive:
+    needs: build-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            $XCODE_CONTAINER \
+            -scheme "$SCHEME" \
+            -destination "generic/platform=iOS" \
+            -archivePath build/App.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify --renderer github-actions
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-archive
+          path: build/App.xcarchive
+          retention-days: 7
+
+  # ---------- 4. Staging / Production with manual approval ----------
+  # Create in Settings → Environments: "staging" and "production".
+  # For production, add Required reviewers (yourself) — that is the manual approval.
+  deploy-staging:
+    needs: archive
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-archive
+      - run: echo "TestFlight / Firebase App Distribution for staging goes here"
+
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: echo "App Store Connect upload after approval goes here"
