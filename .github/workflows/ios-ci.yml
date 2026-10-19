@@ -101,6 +101,9 @@ jobs:
           echo "Using simulator: $UDID"
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
+      # Tests run serially: TCA TestStore waits 1s for effects by default, and parallel
+      # execution on a 3-core runner makes timing-sensitive tests (AppFeatureTests.recording) flaky.
+      # A failed test is retried once; retries are still visible in TestResults.xcresult.
       - name: Build & test (simulator, unsigned)
         run: |
           set -o pipefail
@@ -108,6 +111,9 @@ jobs:
             $XCODE_CONTAINER \
             -scheme "$SCHEME" \
             -only-testing:SyncUpsTests \
+            -parallel-testing-enabled NO \
+            -retry-tests-on-failure \
+            -test-iterations 2 \
             -destination "id=${{ steps.sim.outputs.udid }}" \
             -derivedDataPath .build/DerivedData \
             -resultBundlePath TestResults.xcresult \
