@@ -68,9 +68,19 @@ jobs:
       - name: Pick simulator
         id: sim
         run: |
-          UDID=$(xcrun simctl list devices available -j \
-            | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; \
-              print(next(x['udid'] for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
+          xcrun simctl list runtimes
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          ios = sorted((k for k in d if ".iOS-" in k),
+                       key=lambda k: [int(p) for p in k.split("iOS-")[1].split("-")])
+          for k in reversed(ios):
+              for x in d[k]:
+                  if x["name"].startswith("iPhone"):
+                      print(x["udid"]); sys.exit()
+          sys.exit("No iPhone simulator found")
+          ')
+          echo "Using simulator: $UDID"
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
       - name: Build & test (simulator, unsigned)
@@ -83,15 +93,19 @@ jobs:
             -destination "id=${{ steps.sim.outputs.udid }}" \
             -derivedDataPath .build/DerivedData \
             -resultBundlePath TestResults.xcresult \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
-            | xcbeautify --renderer github-actions
+            | tee xcodebuild.log | xcbeautify --renderer github-actions
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results
-          path: TestResults.xcresult
+          path: |
+            TestResults.xcresult
+            xcodebuild.log
           retention-days: 7
 
   # ---------- 3. Unsigned archive as a "release candidate" ----------
